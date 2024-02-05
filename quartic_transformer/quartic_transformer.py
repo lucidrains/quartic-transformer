@@ -31,6 +31,7 @@ class Attention(Module):
         )
 
         self.scale = dim_head ** 0.5
+        self.causal = causal
         self.dropout = nn.Dropout(dropout)
 
         self.to_out = nn.Sequential(
@@ -49,9 +50,16 @@ class Attention(Module):
         q = q * self.scale
         sim = einsum('b h i d, b h j d -> b h i j', q, k)
 
+        mask_value = -torch.finfo(sim.dtype).max
+
         if exists(mask):
             mask = rearrange(mask, 'b j -> b 1 1 j')
-            sim = sim.masked_fill(~mask, -torch.finfo(sim.dtype).max)
+            sim = sim.masked_fill(~mask, mask_value)
+
+        if self.causal:
+            i, j = sim.shape[-2:]
+            causal_mask = torch.ones((i, j), dtype = torch.bool).triu(j - i + 1)
+            sim = sim.masked_fill(causal_mask, mask_value)
 
         attn = sim.softmax(dim = -1)
         attn = self.dropout(attn)
@@ -59,6 +67,16 @@ class Attention(Module):
         out = einsum('b h i j, b h j d -> b h i d', attn, v)
 
         return self.to_out(out)
+
+# feedforward
+
+def FeedForward(dim, mult = 4):
+    dim_inner = int(dim * mult)
+    return nn.Sequential(
+        nn.Linear(dim, dim_inner, bias = False),
+        nn.GELU(),
+        nn.Linear(dim_inner, dim, bias = False)
+    )
 
 # main class
 
