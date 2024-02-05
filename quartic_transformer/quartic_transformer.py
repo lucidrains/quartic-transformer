@@ -106,7 +106,8 @@ class QuarticTransformer(Module):
         dim_head = 64,
         heads = 8,
         ff_mult = 4,
-        dropout = 0.
+        dropout = 0.,
+        causal = False
     ):
         super().__init__()
         self.token_emb = nn.Embedding(num_tokens, dim)
@@ -114,7 +115,7 @@ class QuarticTransformer(Module):
         self.layers = ModuleList([])
         for _ in range(depth):
             self.layers.append(ModuleList([
-                Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = dropout),
+                Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = dropout, causal = causal),
                 FeedForward(dim = dim, mult = ff_mult, dropout = dropout)
             ]))
 
@@ -123,11 +124,15 @@ class QuarticTransformer(Module):
             nn.Linear(dim, num_tokens, bias = False)
         )
 
-    def forward(self, x):
+    def forward(
+        self,
+        x,
+        mask = None
+    ):
         x = self.token_emb(x)
 
         for attn, ff in self.layers:
-            x = attn(x) + x
+            x = attn(x, mask = mask) + x
             x = ff(x) + x
 
         return self.to_logits(x)
