@@ -84,12 +84,13 @@ class Attention(Module):
 
 # feedforward
 
-def FeedForward(dim, mult = 4):
+def FeedForward(dim, mult = 4, dropout = 0.):
     dim_inner = int(dim * mult)
     return nn.Sequential(
         einn.Norm('b... [d]', mean = False, bias = False),
         nn.Linear(dim, dim_inner, bias = False),
         nn.GELU(),
+        nn.Dropout(dropout),
         nn.Linear(dim_inner, dim, bias = False)
     )
 
@@ -98,11 +99,36 @@ def FeedForward(dim, mult = 4):
 class QuarticTransformer(Module):
     def __init__(
         self,
+        *,
+        num_tokens,
         dim,
+        depth,
         dim_head = 64,
-        heads = 8
+        heads = 8,
+        ff_mult = 4,
+        dropout = 0.
     ):
         super().__init__()
+        self.token_emb = nn.Embedding(num_tokens, dim)
+
+        self.layers = ModuleList([])
+        for _ in range(depth):
+            self.layers.append(ModuleList([
+                Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = dropout),
+                FeedForward(dim = dim, mult = ff_mult, dropout = dropout)
+            ]))
+
+        self.to_logits = nn.Sequential(
+            einn.Norm('b... [d]', mean = False, bias = False),
+            nn.Linear(dim, num_tokens, bias = False)
+        )
 
     def forward(self, x):
-        return x
+        x = self.token_emb(x)
+
+        for attn, ff in self.layers:
+            x = attn(x) + x
+            x = ff(x) + x
+
+        return self.to_logits(x)
+
