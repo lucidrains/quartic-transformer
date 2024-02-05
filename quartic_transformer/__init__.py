@@ -1,0 +1,1 @@
+from quartic_transformer.quartic_transformer import QuarticTransformer
