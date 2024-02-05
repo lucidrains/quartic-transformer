@@ -4,6 +4,12 @@ from torch.nn import Module, ModuleList
 
 from einops import rearrange
 
+# for flash attention
+
+from x_transformers.attend import Attend
+
+# main class
+
 class QuarticTransformer(Module):
     def __init__(
         self,
