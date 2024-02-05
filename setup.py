@@ -17,7 +17,9 @@ setup(
     'attention'
   ],
   install_requires=[
+    'colt5-attention',
     'einops>=0.7.0',
+    'taylor-series-linear-attention',
     'torch>=2.0'
   ],
   classifiers=[
