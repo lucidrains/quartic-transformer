@@ -53,6 +53,11 @@ class Attention(Module):
             Rearrange('b i j h -> b h i j')
         )
 
+        self.to_edges_out = nn.Sequential(
+            nn.Conv2d(heads, dim, 1, bias = False),
+            Rearrange('b d i j -> b i j d')
+        )
+
         self.to_out = nn.Sequential(
             Rearrange('b h n d -> b n (h d)'),
             nn.Linear(dim_inner, dim, bias = False),
@@ -91,7 +96,7 @@ class Attention(Module):
 
         out = einsum('b h i j, b h j d -> b h i d', attn, v)
 
-        return self.to_out(out)
+        return self.to_out(out), self.to_edges_out(attn)
 
 # feedforward
 
@@ -153,9 +158,12 @@ class QuarticTransformer(Module):
         edges = self.to_edges(edges)
 
         for (attn, ff), (edges_ff,) in self.layers:
-            x = attn(x, mask = mask, edges = edges) + x
+            nodes_out, edges_out = attn(x, mask = mask, edges = edges)
+
+            x = x + nodes_out
             x = ff(x) + x
 
+            edges = edges + edges_out
             edges = edges_ff(edges) + edges
 
         return self.to_logits(x)
