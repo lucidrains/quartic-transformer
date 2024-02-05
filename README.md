@@ -2,6 +2,11 @@
 
 Exploring an idea where one forgets about efficiency and carries out attention on each edge of the nodes (tokens)
 
+## Todo
+
+- [ ] first add a weak taylor linear attention on top of all edges
+- [ ] use coordinate descent routing from the node attention matrix to select a subset of edges to update (and do full attention across)
+
 ## Citation
 
 ```bibtex
