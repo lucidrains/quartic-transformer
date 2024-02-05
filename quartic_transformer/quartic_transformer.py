@@ -5,6 +5,16 @@ from torch.nn import Module, ModuleList
 from einops import rearrange
 from einops.layers.torch import Rearrange
 
+import einx.nn.torch as einn
+
+# coordinate descent routing
+
+from colt5_attention import topk
+
+# taylor series linear attention
+
+from taylor_series_linear_attention import TaylorSeriesLinearAttn
+
 # helpers
 
 def exists(v):
@@ -30,6 +40,8 @@ class Attention(Module):
             Rearrange('b n (qkv h d) -> qkv b h n d', h = heads, qkv = 3)
         )
 
+        self.rmsnorm = einn.Norm('b... [d]', mean = False, bias = False)
+
         self.scale = dim_head ** 0.5
         self.causal = causal
         self.dropout = nn.Dropout(dropout)
@@ -45,6 +57,8 @@ class Attention(Module):
         x,
         mask = None
     ):
+        x = self.rmsnorm(x)
+
         q, k, v = self.to_qkv(x)
 
         q = q * self.scale
@@ -73,6 +87,7 @@ class Attention(Module):
 def FeedForward(dim, mult = 4):
     dim_inner = int(dim * mult)
     return nn.Sequential(
+        einn.Norm('b... [d]', mean = False, bias = False),
         nn.Linear(dim, dim_inner, bias = False),
         nn.GELU(),
         nn.Linear(dim_inner, dim, bias = False)

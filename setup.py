@@ -19,6 +19,7 @@ setup(
   install_requires=[
     'colt5-attention',
     'einops>=0.7.0',
+    'einx[torch]>=0.1.3',
     'taylor-series-linear-attention',
     'torch>=2.0'
   ],
