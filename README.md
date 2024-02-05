@@ -6,10 +6,18 @@ Exploring an idea where one forgets about efficiency and carries out attention o
 
 ```bibtex
 @inproceedings{Keles2022OnTC,
-  title   = {On The Computational Complexity of Self-Attention},
-  author  = {Feyza Duman Keles and Pruthuvi Maheshakya Wijewardena and Chinmay Hegde},
-  booktitle = {International Conference on Algorithmic Learning Theory},
-  year    = {2022},
-  url     = {https://api.semanticscholar.org/CorpusID:252198880}
+    title   = {On The Computational Complexity of Self-Attention},
+    author  = {Feyza Duman Keles and Pruthuvi Maheshakya Wijewardena and Chinmay Hegde},
+    booktitle = {International Conference on Algorithmic Learning Theory},
+    year    = {2022},
+    url     = {https://api.semanticscholar.org/CorpusID:252198880}
+}
+```
+
+```bibtex
+@misc{Sutton,
+    title  = {The Bitter Lesson},
+    url    = {http://www.incompleteideas.net/IncIdeas/BitterLesson.html},
+    author = {Sutton, Rich}
 }
 ```
