@@ -21,8 +21,7 @@ setup(
     'einops>=0.7.0',
     'einx>=0.1.3',
     'taylor-series-linear-attention',
-    'torch>=2.0',
-    'x-transformers'
+    'torch>=2.0'
   ],
   classifiers=[
     'Development Status :: 4 - Beta',
