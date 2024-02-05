@@ -5,6 +5,7 @@ from torch.nn import Module, ModuleList
 from einops import rearrange
 from einops.layers.torch import Rearrange
 
+import einx
 import einx.nn.torch as einn
 
 # coordinate descent routing
@@ -67,15 +68,14 @@ class Attention(Module):
         mask_value = -torch.finfo(sim.dtype).max
 
         if exists(mask):
-            mask = rearrange(mask, 'b j -> b 1 1 j')
-            sim = sim.masked_fill(~mask, mask_value)
+            sim = einx.where('b j, b ... j, ', mask, sim, mask_value)
 
         if self.causal:
             i, j = sim.shape[-2:]
             causal_mask = torch.ones((i, j), dtype = torch.bool).triu(j - i + 1)
             sim = sim.masked_fill(causal_mask, mask_value)
 
-        attn = sim.softmax(dim = -1)
+        attn = einx.softmax('b h i [j]', sim)
         attn = self.dropout(attn)
 
         out = einsum('b h i j, b h j d -> b h i d', attn, v)
