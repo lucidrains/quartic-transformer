@@ -53,6 +53,8 @@ class Attention(Module):
             Rearrange('b i j h -> b h i j')
         )
 
+        self.pre_talking_heads = nn.Conv2d(heads, heads, 1, bias = False)
+
         self.to_edges_out = nn.Sequential(
             nn.Conv2d(heads, dim, 1, bias = False),
             Rearrange('b d i j -> b i j d')
@@ -82,6 +84,8 @@ class Attention(Module):
         if exists(edges):
             attn_bias = self.edges_to_attn_bias(edges)
             sim = sim + attn_bias
+
+        sim = self.pre_talking_heads(sim)
 
         if exists(mask):
             sim = einx.where('b j, b ... j, ', mask, sim, mask_value)
