@@ -47,6 +47,12 @@ class Attention(Module):
         self.causal = causal
         self.dropout = nn.Dropout(dropout)
 
+        self.edges_to_attn_bias = nn.Sequential(
+            einn.Norm('b... [d]', mean = False, bias = False),
+            nn.Linear(dim, heads),
+            Rearrange('b i j h -> b h i j')
+        )
+
         self.to_out = nn.Sequential(
             Rearrange('b h n d -> b n (h d)'),
             nn.Linear(dim_inner, dim, bias = False),
@@ -56,7 +62,8 @@ class Attention(Module):
     def forward(
         self,
         x,
-        mask = None
+        mask = None,
+        edges = None
     ):
         x = self.rmsnorm(x)
 
@@ -66,6 +73,10 @@ class Attention(Module):
         sim = einsum('b h i d, b h j d -> b h i j', q, k)
 
         mask_value = -torch.finfo(sim.dtype).max
+
+        if exists(edges):
+            attn_bias = self.edges_to_attn_bias(edges)
+            sim = sim + attn_bias
 
         if exists(mask):
             sim = einx.where('b j, b ... j, ', mask, sim, mask_value)
@@ -112,11 +123,18 @@ class QuarticTransformer(Module):
         super().__init__()
         self.token_emb = nn.Embedding(num_tokens, dim)
 
+        self.to_edges = nn.Linear(dim, dim)
+
         self.layers = ModuleList([])
         for _ in range(depth):
             self.layers.append(ModuleList([
-                Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = dropout, causal = causal),
-                FeedForward(dim = dim, mult = ff_mult, dropout = dropout)
+                ModuleList([
+                    Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = dropout, causal = causal),
+                    FeedForward(dim = dim, mult = ff_mult, dropout = dropout)
+                ]),
+                ModuleList([
+                    FeedForward(dim = dim, mult = ff_mult)
+                ])
             ]))
 
         self.to_logits = nn.Sequential(
@@ -131,9 +149,14 @@ class QuarticTransformer(Module):
     ):
         x = self.token_emb(x)
 
-        for attn, ff in self.layers:
-            x = attn(x, mask = mask) + x
+        edges = einx.add('b i d, b j d -> b i j d', x, x)
+        edges = self.to_edges(edges)
+
+        for (attn, ff), (edges_ff,) in self.layers:
+            x = attn(x, mask = mask, edges = edges) + x
             x = ff(x) + x
+
+            edges = edges_ff(edges) + edges
 
         return self.to_logits(x)
 
