@@ -1,6 +1,6 @@
 ## Quartic Transformer (wip)
 
-Exploring an idea where one forgets about efficiency and carries out attention on each edge of the nodes (tokens)
+Exploring an idea where one forgets about efficiency and carries out attention on each edge of the nodes (tokens). You can think of it as doing attention on the attention matrix, taking the perspective of the attention matrix as all the directed edges of a fully connected graph.
 
 ## Todo
 
