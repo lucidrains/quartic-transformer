@@ -2,7 +2,7 @@ import torch
 from torch import nn, einsum
 from torch.nn import Module, ModuleList
 
-from einops import rearrange
+from einops import rearrange, pack, unpack
 from einops.layers.torch import Rearrange
 
 import einx
@@ -20,6 +20,12 @@ from taylor_series_linear_attention import TaylorSeriesLinearAttn
 
 def exists(v):
     return v is not None
+
+def pack_one(t, pattern):
+    return pack([t], pattern)
+
+def unpack_one(t, ps, pattern):
+    return unpack(t, ps, pattern)[0]
 
 # attention
 
@@ -125,6 +131,8 @@ class QuarticTransformer(Module):
         depth,
         dim_head = 64,
         heads = 8,
+        linear_dim_head = 16,
+        linear_heads = 16,
         ff_mult = 4,
         dropout = 0.,
         causal = False
@@ -142,6 +150,7 @@ class QuarticTransformer(Module):
                     FeedForward(dim = dim, mult = ff_mult, dropout = dropout)
                 ]),
                 ModuleList([
+                    TaylorSeriesLinearAttn(dim = dim, prenorm = True, dim_head = linear_dim_head, heads = linear_heads),
                     FeedForward(dim = dim, mult = ff_mult)
                 ])
             ]))
@@ -161,13 +170,24 @@ class QuarticTransformer(Module):
         edges = einx.add('b i d, b j d -> b i j d', x, x)
         edges = self.to_edges(edges)
 
-        for (attn, ff), (edges_ff,) in self.layers:
+        edges_mask = None
+        if exists(mask):
+            edges_mask = einx.logical_and('b i, b j -> b (i j)', mask, mask)
+
+        for (attn, ff), (edges_linear_attn, edges_ff,) in self.layers:
             nodes_out, edges_out = attn(x, mask = mask, edges = edges)
 
             x = x + nodes_out
             x = ff(x) + x
 
             edges = edges + edges_out
+
+            edges, packed_shape = pack_one(edges, 'b * d')
+
+            edges = edges_linear_attn(edges, mask = edges_mask) + edges
+
+            edges = unpack_one(edges, packed_shape, 'b * d')
+
             edges = edges_ff(edges) + edges
 
         return self.to_logits(x)
