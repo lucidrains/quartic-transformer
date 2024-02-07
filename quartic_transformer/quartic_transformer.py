@@ -155,23 +155,17 @@ class AxialLinearAttention(Module):
         x,
         mask = None
     ):
-        print(x.shape)
-        x, ps = pack_one(x, '* n d')
+        b = x.shape[0]
+
+        x = rearrange(x, 'b i j d -> (b i) j d')
 
         x = self.row_attn(x, mask = mask) + x
 
-        x = unpack_one(x, ps, '* n d')
-
-        x = rearrange(x, 'b i j d -> b j i d')
-
-        x, ps = pack_one(x, '* n d')
+        x = rearrange(x, '(b i) j d -> (b j) i d', b = b)
 
         x = self.col_attn(x, mask = mask) + x
 
-        x = unpack_one(x, ps, '* n d')
-
-        x = rearrange(x, 'b j i d -> b i j d')
-        return x
+        return rearrange(x, '(b j) i d -> b i j d', b = b)
 
 # main class
 
