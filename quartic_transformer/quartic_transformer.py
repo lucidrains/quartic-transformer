@@ -16,6 +16,10 @@ from colt5_attention import topk
 
 from taylor_series_linear_attention import TaylorSeriesLinearAttn
 
+# dynamic positional bias from x-transformers
+
+from x_transformers.x_transformers import DynamicPositionBias
+
 # helpers
 
 def exists(v):
@@ -198,6 +202,9 @@ class QuarticTransformer(Module):
 
         self.token_emb = nn.Embedding(num_tokens, dim)
         self.pos_emb = nn.Embedding(max_seq_len, dim)
+
+        self.dynamic_rel_pos_bias = DynamicPositionBias(dim, depth = 2, heads = dim)
+
         self.to_edge_emb = EdgeEmbed(dim)
 
         self.layers = ModuleList([])
@@ -230,6 +237,9 @@ class QuarticTransformer(Module):
 
         x = x + self.pos_emb(torch.arange(seq_len, device = device))
         edges = self.to_edge_emb(x)
+
+        edges_rel_pos = self.dynamic_rel_pos_bias(seq_len, seq_len)
+        edges = einx.add('b i j d, d i j -> b i j d', edges, edges_rel_pos)
 
         edges_mask = None
         if exists(mask):
