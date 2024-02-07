@@ -47,6 +47,12 @@ class Attention(Module):
             Rearrange('b n (qkv h d) -> qkv b h n d', h = heads, qkv = 3)
         )
 
+        self.to_gates = nn.Sequential(
+            nn.Linear(dim, heads),
+            Rearrange('b n h -> b h n 1'),
+            nn.Sigmoid()
+        )
+
         self.rmsnorm = einn.Norm('b... [d]', mean = False, bias = False)
 
         self.scale = dim_head ** 0.5
@@ -106,6 +112,8 @@ class Attention(Module):
 
         out = einsum('b h i j, b h j d -> b h i d', attn, v)
 
+        out = out * self.to_gates(x)
+
         return self.to_out(out), self.to_edges_out(attn)
 
 # feedforward
@@ -147,8 +155,8 @@ class AxialLinearAttention(Module):
         **attn_kwargs
     ):
         super().__init__()
-        self.row_attn = TaylorSeriesLinearAttn(**attn_kwargs)
-        self.col_attn = TaylorSeriesLinearAttn(**attn_kwargs)
+        self.row_attn = TaylorSeriesLinearAttn(gate_value_heads = True, **attn_kwargs)
+        self.col_attn = TaylorSeriesLinearAttn(gate_value_heads = True, **attn_kwargs)
 
     def forward(
         self,
