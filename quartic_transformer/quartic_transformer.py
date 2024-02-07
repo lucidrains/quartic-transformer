@@ -120,6 +120,25 @@ def FeedForward(dim, mult = 4, dropout = 0.):
         nn.Linear(dim_inner, dim, bias = False)
     )
 
+# edge embed
+
+class EdgeEmbed(Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.to_rows = nn.Linear(dim, dim, bias = False)
+        self.to_cols = nn.Linear(dim, dim, bias = False)
+
+        self.to_edges = nn.Sequential(
+            nn.Linear(dim, dim, bias = False),
+            nn.LayerNorm(dim)
+        )
+
+    def forward(self, x):
+        rows = self.to_rows(x)
+        cols = self.to_cols(x)
+        outer_sum = einx.add('b i d, b j d -> b i j d', rows, cols)
+        return self.to_edges(outer_sum)
+
 # main class
 
 class QuarticTransformer(Module):
@@ -139,8 +158,7 @@ class QuarticTransformer(Module):
     ):
         super().__init__()
         self.token_emb = nn.Embedding(num_tokens, dim)
-
-        self.to_edges = nn.Linear(dim, dim)
+        self.to_edge_emb = EdgeEmbed(dim)
 
         self.layers = ModuleList([])
         for _ in range(depth):
@@ -167,8 +185,7 @@ class QuarticTransformer(Module):
     ):
         x = self.token_emb(x)
 
-        edges = einx.add('b i d, b j d -> b i j d', x, x)
-        edges = self.to_edges(edges)
+        edges = self.to_edge_emb(x)
 
         edges_mask = None
         if exists(mask):
