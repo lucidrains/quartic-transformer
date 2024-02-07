@@ -139,6 +139,40 @@ class EdgeEmbed(Module):
         outer_sum = einx.add('b i d, b j d -> b i j d', rows, cols)
         return self.to_edges(outer_sum)
 
+# axial linear attention
+
+class AxialLinearAttention(Module):
+    def __init__(
+        self,
+        **attn_kwargs
+    ):
+        super().__init__()
+        self.row_attn = TaylorSeriesLinearAttn(**attn_kwargs)
+        self.col_attn = TaylorSeriesLinearAttn(**attn_kwargs)
+
+    def forward(
+        self,
+        x,
+        mask = None
+    ):
+        print(x.shape)
+        x, ps = pack_one(x, '* n d')
+
+        x = self.row_attn(x, mask = mask) + x
+
+        x = unpack_one(x, ps, '* n d')
+
+        x = rearrange(x, 'b i j d -> b j i d')
+
+        x, ps = pack_one(x, '* n d')
+
+        x = self.col_attn(x, mask = mask) + x
+
+        x = unpack_one(x, ps, '* n d')
+
+        x = rearrange(x, 'b j i d -> b i j d')
+        return x
+
 # main class
 
 class QuarticTransformer(Module):
@@ -150,14 +184,18 @@ class QuarticTransformer(Module):
         depth,
         dim_head = 64,
         heads = 8,
+        causal = False,
         linear_dim_head = 16,
         linear_heads = 16,
         ff_mult = 4,
         dropout = 0.,
-        causal = False
+        max_seq_len = 2048,
     ):
         super().__init__()
+        self.max_seq_len = max_seq_len
+
         self.token_emb = nn.Embedding(num_tokens, dim)
+        self.pos_emb = nn.Embedding(max_seq_len, dim)
         self.to_edge_emb = EdgeEmbed(dim)
 
         self.layers = ModuleList([])
@@ -168,7 +206,7 @@ class QuarticTransformer(Module):
                     FeedForward(dim = dim, mult = ff_mult, dropout = dropout)
                 ]),
                 ModuleList([
-                    TaylorSeriesLinearAttn(dim = dim, prenorm = True, dim_head = linear_dim_head, heads = linear_heads),
+                    AxialLinearAttention(dim = dim, prenorm = True, dim_head = linear_dim_head, heads = linear_heads, causal = causal),
                     FeedForward(dim = dim, mult = ff_mult)
                 ])
             ]))
@@ -183,8 +221,12 @@ class QuarticTransformer(Module):
         x,
         mask = None
     ):
+        seq_len, device = x.shape[-1], x.device
+        assert seq_len <= self.max_seq_len
+
         x = self.token_emb(x)
 
+        x = x + self.pos_emb(torch.arange(seq_len, device = device))
         edges = self.to_edge_emb(x)
 
         edges_mask = None
@@ -199,11 +241,7 @@ class QuarticTransformer(Module):
 
             edges = edges + edges_out
 
-            edges, packed_shape = pack_one(edges, 'b * d')
-
-            edges = edges_linear_attn(edges, mask = edges_mask) + edges
-
-            edges = unpack_one(edges, packed_shape, 'b * d')
+            edges = edges_linear_attn(edges, mask = mask) + edges
 
             edges = edges_ff(edges) + edges
 
