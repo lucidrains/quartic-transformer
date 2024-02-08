@@ -196,8 +196,10 @@ class QuarticTransformer(Module):
         ff_mult = 4,
         dropout = 0.,
         max_seq_len = 2048,
+        ablate_edges = False
     ):
         super().__init__()
+        self.ablate_edges = ablate_edges
         self.max_seq_len = max_seq_len
 
         self.token_emb = nn.Embedding(num_tokens, dim)
@@ -246,10 +248,14 @@ class QuarticTransformer(Module):
             edges_mask = einx.logical_and('b i, b j -> b (i j)', mask, mask)
 
         for (attn, ff), (edges_linear_attn, edges_ff,) in self.layers:
-            nodes_out, edges_out = attn(x, mask = mask, edges = edges)
+
+            nodes_out, edges_out = attn(x, mask = mask, edges = edges if not self.ablate_edges else None)
 
             x = x + nodes_out
             x = ff(x) + x
+
+            if self.ablate_edges:
+                continue
 
             edges = edges + edges_out
 

@@ -2,6 +2,8 @@
 
 Exploring an idea where one forgets about efficiency and carries out attention on each edge of the nodes (tokens). You can think of it as doing attention on the attention matrix, taking the perspective of the attention matrix as all the directed edges of a fully connected graph.
 
+The hypothesis is that there is a task out there that the (sub)quartic transformer can do that quadratic transformers cannot.
+
 ## Todo
 
 - [x] first add a weak taylor linear attention on top of all edges
