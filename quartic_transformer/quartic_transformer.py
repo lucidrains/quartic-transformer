@@ -25,6 +25,9 @@ from x_transformers.x_transformers import DynamicPositionBias
 def exists(v):
     return v is not None
 
+def default(v, d):
+    return v if exists(v) else d
+
 def pack_one(t, pattern):
     return pack([t], pattern)
 
@@ -37,6 +40,7 @@ class Attention(Module):
     def __init__(
         self,
         dim,
+        dim_edges = None,
         dim_head = 64,
         heads = 8,
         dropout = 0.,
@@ -44,6 +48,7 @@ class Attention(Module):
         causal = False
     ):
         super().__init__()
+        dim_edges = default(dim_edges, dim)
         dim_inner = dim_head * heads
 
         self.to_qkv = nn.Sequential(
@@ -65,14 +70,14 @@ class Attention(Module):
 
         self.edges_to_attn_bias = nn.Sequential(
             einn.Norm('b... [d]', mean = False, bias = False),
-            nn.Linear(dim, heads),
+            nn.Linear(dim_edges, heads),
             Rearrange('b i j h -> b h i j')
         )
 
         self.pre_talking_heads = nn.Conv2d(heads, heads, 1, bias = False)
 
         self.to_edges_out = nn.Sequential(
-            nn.Conv2d(heads, dim, 1, bias = False),
+            nn.Conv2d(heads, dim_edges, 1, bias = False),
             Rearrange('b d i j -> b i j d')
         )
 
@@ -135,14 +140,15 @@ def FeedForward(dim, mult = 4, dropout = 0.):
 # edge embed
 
 class EdgeEmbed(Module):
-    def __init__(self, dim):
+    def __init__(self, dim, dim_edges = None):
         super().__init__()
-        self.to_rows = nn.Linear(dim, dim, bias = False)
-        self.to_cols = nn.Linear(dim, dim, bias = False)
+        dim_edges = default(dim_edges, dim)
+        self.to_rows = nn.Linear(dim, dim_edges, bias = False)
+        self.to_cols = nn.Linear(dim, dim_edges, bias = False)
 
         self.to_edges = nn.Sequential(
-            nn.Linear(dim, dim, bias = False),
-            nn.LayerNorm(dim)
+            nn.Linear(dim_edges, dim_edges, bias = False),
+            nn.LayerNorm(dim_edges)
         )
 
     def forward(self, x):
@@ -188,6 +194,7 @@ class QuarticTransformer(Module):
         num_tokens,
         dim,
         depth,
+        dim_edges = None,
         dim_head = 64,
         heads = 8,
         causal = False,
@@ -199,26 +206,28 @@ class QuarticTransformer(Module):
         ablate_edges = False
     ):
         super().__init__()
+        dim_edges = default(dim_edges, dim)
+
         self.ablate_edges = ablate_edges
         self.max_seq_len = max_seq_len
 
         self.token_emb = nn.Embedding(num_tokens, dim)
         self.pos_emb = nn.Embedding(max_seq_len, dim)
 
-        self.dynamic_rel_pos_bias = DynamicPositionBias(dim, depth = 2, heads = dim)
+        self.dynamic_rel_pos_bias = DynamicPositionBias(dim, depth = 2, heads = dim_edges)
 
-        self.to_edge_emb = EdgeEmbed(dim)
+        self.to_edge_emb = EdgeEmbed(dim, dim_edges)
 
         self.layers = ModuleList([])
         for _ in range(depth):
             self.layers.append(ModuleList([
                 ModuleList([
-                    Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = dropout, causal = causal),
+                    Attention(dim = dim, dim_edges = dim_edges, dim_head = dim_head, heads = heads, dropout = dropout, causal = causal),
                     FeedForward(dim = dim, mult = ff_mult, dropout = dropout)
                 ]),
                 ModuleList([
-                    AxialLinearAttention(dim = dim, prenorm = True, dim_head = linear_dim_head, heads = linear_heads, causal = causal),
-                    FeedForward(dim = dim, mult = ff_mult)
+                    AxialLinearAttention(dim = dim_edges, prenorm = True, dim_head = linear_dim_head, heads = linear_heads, causal = causal),
+                    FeedForward(dim = dim_edges, mult = ff_mult)
                 ])
             ]))
 
