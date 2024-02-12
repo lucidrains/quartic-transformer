@@ -23,13 +23,17 @@ class Attention(Module):
     def __init__(
         self,
         dim,
+        num_streams,
         dim_head = 64,
         heads = 8,
         dropout = 0.,
-        causal = False
+        causal = False,
     ):
         super().__init__()
         dim_inner = dim_head * heads
+        all_heads = num_streams * heads
+
+        self.num_streams = num_streams
 
         self.to_qkv = nn.Sequential(
             nn.Linear(dim, dim_inner * 3, bias = False),
@@ -48,7 +52,11 @@ class Attention(Module):
         self.causal = causal
         self.dropout = nn.Dropout(dropout)
 
-        self.pre_talking_heads = nn.Conv2d(heads, heads, 1, bias = False)
+        self.pre_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False)
+        self.post_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False)
+
+        nn.init.eye_(self.pre_talking_heads.weight[..., 0, 0])
+        nn.init.eye_(self.post_talking_heads.weight[..., 0, 0])
 
         self.to_out = nn.Sequential(
             Rearrange('b h n d -> b n (h d)'),
@@ -62,6 +70,7 @@ class Attention(Module):
         mask = None,
         edges = None
     ):
+        s = self.num_streams
         x = self.rmsnorm(x)
 
         q, k, v = self.to_qkv(x)
@@ -71,7 +80,9 @@ class Attention(Module):
 
         mask_value = -torch.finfo(sim.dtype).max
 
+        sim = rearrange(sim, '(b s) h n d -> b (s h) n d', s = s)
         sim = self.pre_talking_heads(sim)
+        sim = rearrange(sim, 'b (s h) n d -> (b s) h n d', s = s)
 
         if exists(mask):
             sim = einx.where('b j, b ... j, ', mask, sim, mask_value)
@@ -83,6 +94,10 @@ class Attention(Module):
 
         attn = einx.softmax('b h i [j]', sim)
         attn = self.dropout(attn)
+
+        attn = rearrange(attn, '(b s) h n d -> b (s h) n d', s = s)
+        attn = self.post_talking_heads(attn)
+        attn = rearrange(attn, 'b (s h) n d -> (b s) h n d', s = s)
 
         out = einsum('b h i j, b h j d -> b h i d', attn, v)
 
@@ -112,7 +127,7 @@ class MultiStreamTransformer(Module):
         dim,
         num_tokens,
         depth,
-        streams = 2,
+        num_streams = 2,
         dim_head = 64,
         heads = 8,
         max_seq_len = 2048,
@@ -124,13 +139,13 @@ class MultiStreamTransformer(Module):
         self.token_emb = nn.Embedding(num_tokens, dim)
         self.pos_emb = nn.Embedding(max_seq_len, dim)
 
-        self.num_streams = streams
-        self.stream_emb = nn.Parameter(torch.randn(streams, dim))
+        self.num_streams = num_streams
+        self.stream_emb = nn.Parameter(torch.randn(num_streams, dim))
 
         self.layers = ModuleList([])
         for _ in range(depth):
             self.layers.append(ModuleList([
-                Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = attn_dropout),
+                Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = attn_dropout, num_streams = num_streams),
                 FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout)
             ]))
 
