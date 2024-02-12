@@ -264,4 +264,3 @@ class QuarticTransformer(Module):
             edges = edges_ff(edges) + edges
 
         return self.to_logits(x)
-

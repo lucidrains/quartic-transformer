@@ -10,6 +10,8 @@ The hypothesis is that there is a task out there that the (sub)quartic transform
 
 - [ ] use coordinate descent routing from the node attention matrix to select a subset of edges to update (and do full attention across)
 
+- [ ] build multi-stream transformer, but allow exchange of information at the attention matrix, either through residual attention or a small edge-wise feedforward
+
 ## Citation
 
 ```bibtex
@@ -19,6 +21,17 @@ The hypothesis is that there is a task out there that the (sub)quartic transform
     booktitle = {International Conference on Algorithmic Learning Theory},
     year    = {2022},
     url     = {https://api.semanticscholar.org/CorpusID:252198880}
+}
+```
+
+```bibtex
+@article{Burtsev2021MultiStreamT,
+    title   = {Multi-Stream Transformers},
+    author  = {Mikhail S. Burtsev and Anna Rumshisky},
+    journal = {ArXiv},
+    year    = {2021},
+    volume  = {abs/2107.10342},
+    url     = {https://api.semanticscholar.org/CorpusID:236171087}
 }
 ```
 
