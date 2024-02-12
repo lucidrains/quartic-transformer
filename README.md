@@ -36,7 +36,7 @@ logits = model(tokens) # (1, 128, 256)
 
 - [ ] use coordinate descent routing from the node attention matrix to select a subset of edges to update (and do full attention across)
 
-- [ ] build multi-stream transformer, but allow exchange of information at the attention matrix, either through residual attention or a small edge-wise feedforward
+- [x] build multi-stream transformer, but allow exchange of information at the attention matrix, either through residual attention or a small edge-wise feedforward
 
 ## Citation
 
