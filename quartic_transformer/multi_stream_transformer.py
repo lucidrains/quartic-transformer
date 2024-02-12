@@ -1,0 +1,160 @@
+import torch
+import torch.nn.functional as F
+from torch.nn import Module, ModuleList
+from torch import nn, einsum, Tensor
+
+from einops import rearrange, reduce
+from einops.layers.torch import Rearrange
+
+import einx
+import einx.nn.torch as einn
+
+# helper
+
+def exists(v):
+    return v is not None
+
+def default(v, d):
+    return v if exists(v) else d
+
+# attention
+
+class Attention(Module):
+    def __init__(
+        self,
+        dim,
+        dim_head = 64,
+        heads = 8,
+        dropout = 0.,
+        causal = False
+    ):
+        super().__init__()
+        dim_inner = dim_head * heads
+
+        self.to_qkv = nn.Sequential(
+            nn.Linear(dim, dim_inner * 3, bias = False),
+            Rearrange('b n (qkv h d) -> qkv b h n d', h = heads, qkv = 3)
+        )
+
+        self.to_gates = nn.Sequential(
+            nn.Linear(dim, heads),
+            Rearrange('b n h -> b h n 1'),
+            nn.Sigmoid()
+        )
+
+        self.rmsnorm = einn.Norm('b... [d]', mean = False, bias = False)
+
+        self.scale = dim_head ** 0.5
+        self.causal = causal
+        self.dropout = nn.Dropout(dropout)
+
+        self.pre_talking_heads = nn.Conv2d(heads, heads, 1, bias = False)
+
+        self.to_out = nn.Sequential(
+            Rearrange('b h n d -> b n (h d)'),
+            nn.Linear(dim_inner, dim, bias = False),
+            nn.Dropout(dropout)
+        )
+
+    def forward(
+        self,
+        x,
+        mask = None,
+        edges = None
+    ):
+        x = self.rmsnorm(x)
+
+        q, k, v = self.to_qkv(x)
+
+        q = q * self.scale
+        sim = einsum('b h i d, b h j d -> b h i j', q, k)
+
+        mask_value = -torch.finfo(sim.dtype).max
+
+        sim = self.pre_talking_heads(sim)
+
+        if exists(mask):
+            sim = einx.where('b j, b ... j, ', mask, sim, mask_value)
+
+        if self.causal:
+            i, j = sim.shape[-2:]
+            causal_mask = torch.ones((i, j), dtype = torch.bool).triu(j - i + 1)
+            sim = sim.masked_fill(causal_mask, mask_value)
+
+        attn = einx.softmax('b h i [j]', sim)
+        attn = self.dropout(attn)
+
+        out = einsum('b h i j, b h j d -> b h i d', attn, v)
+
+        out = out * self.to_gates(x)
+        out = self.to_out(out)
+
+        return out
+
+# feedforward
+
+def FeedForward(dim, mult = 4, dropout = 0.):
+    dim_inner = int(dim * mult)
+    return nn.Sequential(
+        einn.Norm('b... [d]', mean = False, bias = False),
+        nn.Linear(dim, dim_inner, bias = False),
+        nn.GELU(),
+        nn.Dropout(dropout),
+        nn.Linear(dim_inner, dim, bias = False)
+    )
+
+# classes
+
+class MultiStreamTransformer(Module):
+    def __init__(
+        self,
+        *,
+        dim,
+        num_tokens,
+        depth,
+        streams = 2,
+        dim_head = 64,
+        heads = 8,
+        max_seq_len = 2048,
+        attn_dropout = 0.,
+        ff_dropout = 0.,
+        ff_mult = 4.,
+    ):
+        super().__init__()
+        self.token_emb = nn.Embedding(num_tokens, dim)
+        self.pos_emb = nn.Embedding(max_seq_len, dim)
+
+        self.num_streams = streams
+        self.stream_emb = nn.Parameter(torch.randn(streams, dim))
+
+        self.layers = ModuleList([])
+        for _ in range(depth):
+            self.layers.append(ModuleList([
+                Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = attn_dropout),
+                FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout)
+            ]))
+
+        self.to_logits = nn.Sequential(
+            einn.Norm('b... [d]', mean = False, bias = False),
+            nn.Linear(dim, num_tokens, bias = False)
+        )
+
+    def forward(
+        self,
+        x,
+        mask = None
+    ):
+        b, n, device = *x.shape, x.device
+
+        x = self.token_emb(x)
+        x = x + self.pos_emb(torch.arange(n, device = device))
+
+        x = einx.add('b n d, s d -> (b s) n d', x, self.stream_emb)
+
+        for attn, ff in self.layers:
+            x = attn(x, mask = mask) + x
+            x = ff(x) + x
+
+        x = reduce(x, '(b s) n d -> b n d', 'sum', s = self.num_streams)
+
+        return self.to_logits(x)

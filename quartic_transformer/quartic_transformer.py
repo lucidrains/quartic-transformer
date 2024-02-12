@@ -44,7 +44,6 @@ class Attention(Module):
         dim_head = 64,
         heads = 8,
         dropout = 0.,
-        flash = True,
         causal = False,
         incorporate_edges = True
     ):

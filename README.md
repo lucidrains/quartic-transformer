@@ -4,6 +4,8 @@ Exploring an idea where one forgets about efficiency and carries out attention o
 
 The hypothesis is that there is a task out there that the (sub)quartic transformer can do that quadratic transformers cannot.
 
+Will also contain a modified implementation of <a href="https://arxiv.org/abs/2107.10342">multistream transformer</a> (which is not quartic, but number of streams times the quadratic).
+
 ## Install
 
 ```bash
