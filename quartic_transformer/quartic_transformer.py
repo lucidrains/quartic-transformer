@@ -2,7 +2,7 @@ import torch
 from torch import nn, einsum
 from torch.nn import Module, ModuleList
 
-from einops import rearrange, pack, unpack
+from einops import rearrange, repeat, pack, unpack
 from einops.layers.torch import Rearrange
 
 import einx
@@ -45,7 +45,8 @@ class Attention(Module):
         heads = 8,
         dropout = 0.,
         flash = True,
-        causal = False
+        causal = False,
+        incorporate_edges = True
     ):
         super().__init__()
         dim_edges = default(dim_edges, dim)
@@ -68,18 +69,24 @@ class Attention(Module):
         self.causal = causal
         self.dropout = nn.Dropout(dropout)
 
-        self.edges_to_attn_bias = nn.Sequential(
-            einn.Norm('b... [d]', mean = False, bias = False),
-            nn.Linear(dim_edges, heads),
-            Rearrange('b i j h -> b h i j')
-        )
+        self.edges_to_attn_bias = None
+
+        if incorporate_edges:
+            self.edges_to_attn_bias = nn.Sequential(
+                einn.Norm('b... [d]', mean = False, bias = False),
+                nn.Linear(dim_edges, heads),
+                Rearrange('b i j h -> b h i j')
+            )
 
         self.pre_talking_heads = nn.Conv2d(heads, heads, 1, bias = False)
 
-        self.to_edges_out = nn.Sequential(
-            nn.Conv2d(heads, dim_edges, 1, bias = False),
-            Rearrange('b d i j -> b i j d')
-        )
+        self.to_edges_out = None
+
+        if incorporate_edges:
+            self.to_edges_out = nn.Sequential(
+                nn.Conv2d(heads, dim_edges, 1, bias = False),
+                Rearrange('b d i j -> b i j d')
+            )
 
         self.to_out = nn.Sequential(
             Rearrange('b h n d -> b n (h d)'),
@@ -102,7 +109,7 @@ class Attention(Module):
 
         mask_value = -torch.finfo(sim.dtype).max
 
-        if exists(edges):
+        if exists(edges) and exists(self.edges_to_attn_bias):
             attn_bias = self.edges_to_attn_bias(edges)
             sim = sim + attn_bias
 
@@ -122,8 +129,16 @@ class Attention(Module):
         out = einsum('b h i j, b h j d -> b h i d', attn, v)
 
         out = out * self.to_gates(x)
+        out = self.to_out(out)
 
-        return self.to_out(out), self.to_edges_out(attn)
+        edges_out = None
+        if exists(self.to_edges_out):
+            edges_out = self.to_edges_out(attn)
+
+        if not exists(edges_out):
+            return out
+
+        return out, edges_out
 
 # feedforward
 
@@ -162,18 +177,23 @@ class EdgeEmbed(Module):
 class AxialLinearAttention(Module):
     def __init__(
         self,
+        dim,
+        diagonal_attn = True,
         **attn_kwargs
     ):
         super().__init__()
-        self.row_attn = TaylorSeriesLinearAttn(gate_value_heads = True, **attn_kwargs)
-        self.col_attn = TaylorSeriesLinearAttn(gate_value_heads = True, **attn_kwargs)
+
+        self.row_attn = TaylorSeriesLinearAttn(dim = dim, gate_value_heads = True, prenorm = True, **attn_kwargs)
+        self.col_attn = TaylorSeriesLinearAttn(dim = dim, gate_value_heads = True, prenorm = True, **attn_kwargs)
+
+        self.diagonal_attn = Attention(dim = dim, incorporate_edges = False, **attn_kwargs) if diagonal_attn else None
 
     def forward(
         self,
         x,
         mask = None
     ):
-        b = x.shape[0]
+        b, n, device = *x.shape[:2], x.device
 
         x = rearrange(x, 'b i j d -> (b i) j d')
 
@@ -183,7 +203,21 @@ class AxialLinearAttention(Module):
 
         x = self.col_attn(x, mask = mask) + x
 
-        return rearrange(x, '(b j) i d -> b i j d', b = b)
+        x = rearrange(x, '(b j) i d -> b i j d', b = b)
+
+        if not exists(self.diagonal_attn):
+            return x
+
+        diagonal_mask = torch.eye(n, dtype = torch.bool, device = device)
+        diagonal_mask = rearrange(diagonal_mask, 'i j -> 1 i j')
+
+        x = rearrange(x[diagonal_mask], '(b n) d -> b n d', b = b)
+
+        x = self.diagonal_attn(x) + x
+
+        diagonal_mask = rearrange(diagonal_mask, '... -> ... 1')
+        x = x.masked_scatter(diagonal_mask, x)
+        return x
 
 # main class
 
@@ -203,7 +237,8 @@ class QuarticTransformer(Module):
         ff_mult = 4,
         dropout = 0.,
         max_seq_len = 2048,
-        ablate_edges = False
+        ablate_edges = False,
+        edges_diagonal_attn = True
     ):
         super().__init__()
         dim_edges = default(dim_edges, dim)
@@ -226,7 +261,7 @@ class QuarticTransformer(Module):
                     FeedForward(dim = dim, mult = ff_mult, dropout = dropout)
                 ]),
                 ModuleList([
-                    AxialLinearAttention(dim = dim_edges, prenorm = True, dim_head = linear_dim_head, heads = linear_heads, causal = causal),
+                    AxialLinearAttention(dim = dim_edges, dim_head = linear_dim_head, heads = linear_heads, causal = causal, diagonal_attn = edges_diagonal_attn),
                     FeedForward(dim = dim_edges, mult = ff_mult)
                 ])
             ]))

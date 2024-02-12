@@ -4,6 +4,30 @@ Exploring an idea where one forgets about efficiency and carries out attention o
 
 The hypothesis is that there is a task out there that the (sub)quartic transformer can do that quadratic transformers cannot.
 
+## Install
+
+```bash
+$ pip install quartic-transformer
+```
+
+## Usage
+
+```python
+import torch
+from quartic_transformer import QuarticTransformer
+
+model = QuarticTransformer(
+    num_tokens = 256,
+    depth = 2,
+    dim = 512,
+    dim_edges = 32
+)
+
+tokens = torch.randint(0, 256, (1, 128))
+
+logits = model(tokens) # (1, 128, 256)
+```
+
 ## Todo
 
 - [x] first add a weak taylor linear attention on top of all edges
