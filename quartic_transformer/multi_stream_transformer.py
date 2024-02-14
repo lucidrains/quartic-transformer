@@ -55,8 +55,8 @@ class Attention(Module):
         self.pre_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False)
         self.post_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False)
 
-        nn.init.eye_(self.pre_talking_heads.weight[..., 0, 0])
-        nn.init.eye_(self.post_talking_heads.weight[..., 0, 0])
+        nn.init.dirac_(self.pre_talking_heads.weight)
+        nn.init.dirac_(self.post_talking_heads.weight)
 
         self.to_out = nn.Sequential(
             Rearrange('b h n d -> b n (h d)'),
@@ -134,6 +134,7 @@ class MultiStreamTransformer(Module):
         attn_dropout = 0.,
         ff_dropout = 0.,
         ff_mult = 4.,
+        ablate_cross_stream_talking_heads = False
     ):
         super().__init__()
         self.token_emb = nn.Embedding(num_tokens, dim)
@@ -143,9 +144,12 @@ class MultiStreamTransformer(Module):
         self.stream_emb = nn.Parameter(torch.randn(num_streams, dim))
 
         self.layers = ModuleList([])
+
+        talking_heads_num_streams = 2 if not ablate_cross_stream_talking_heads else 1
+
         for _ in range(depth):
             self.layers.append(ModuleList([
-                Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = attn_dropout, num_streams = num_streams),
+                Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = attn_dropout, num_streams = talking_heads_num_streams),
                 FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout)
             ]))
 
