@@ -12,7 +12,7 @@ from torch.nn import Module, ModuleList
 from torch import nn, einsum, Tensor
 
 from einops import rearrange, reduce
-from einops.layers.torch import Rearrange
+from einops.layers.torch import Rearrange, Reduce
 
 import einx
 from einx import get_at
@@ -25,6 +25,26 @@ def exists(v):
 
 def default(v, d):
     return v if exists(v) else d
+
+def log(t, eps = 1e-20):
+    return t.clamp(min = eps)
+
+def entropy(prob, dim = -1, keepdim = False):
+    return (-prob * log(prob)).sum(dim = dim, keepdim = keepdim)
+
+def calc_stream_loss(attn_matrix, streams):
+    attn_matrix = rearrange(attn_matrix, '(b s) h i j -> s b h i j', s = streams)
+
+    # make sure all heads across one stream is dissimilar to all other heads of all other streams
+
+    accum, *rests = attn_matrix
+    for rest in rests:
+        accum = einx.add('b h1 ..., b h2 ... -> b (h1 h2) ...', accum, rest)
+
+    mean_prob = accum / streams
+    return -entropy(mean_prob, dim = -1)
+
+# residual
 
 class Residual(Module):
     def __init__(self, fn):
@@ -121,6 +141,9 @@ class Attention(Module):
             sim = sim.masked_fill(causal_mask, mask_value)
 
         attn = einx.softmax('b h i [j]', sim)
+
+        post_softmax_attn = attn
+
         attn = self.dropout(attn)
 
         if exists(self.post_talking_heads):
@@ -133,7 +156,7 @@ class Attention(Module):
         out = out * self.to_gates(x)
         out = self.to_out(out)
 
-        return out
+        return out, post_softmax_attn
 
 # feedforward
 
@@ -149,16 +172,16 @@ def FeedForward(dim, mult = 4, dropout = 0.):
 
 def TalkingHeadsFeedForward(dim, mult = 2, dropout = 0.):
     dim_inner = int(dim * mult)
-    net = Residual(nn.Sequential(
+    net = nn.Sequential(
         einn.Norm('b [c] ...', mean = False, bias = False),
         nn.Conv2d(dim, dim_inner, 1, bias = False),
         nn.GELU(),
         nn.Dropout(dropout),
         nn.Conv2d(dim_inner, dim, 1, bias = False)
-    ))
+    )
 
-    nn.init.zeros_(net.fn[-1].weight)
-    return net
+    nn.init.zeros_(net[-1].weight)
+    return Residual(net)
 
 # embedding types
 # streams can either have (1) shared embeddings with a stream specific embedding added
@@ -265,6 +288,7 @@ class MultiStreamTransformer(Module):
             ]))
 
         self.to_logits = nn.Sequential(
+            Reduce('(b s) n d -> b n d', 'sum', s = num_streams),
             einn.Norm('b... [d]', mean = False, bias = False),
             nn.Linear(dim, num_tokens, bias = False)
         )
@@ -272,16 +296,31 @@ class MultiStreamTransformer(Module):
     def forward(
         self,
         x,
-        mask = None
+        mask = None,
+        stream_attn_diversity_loss = False
     ):
-        b, n, device = *x.shape, x.device
+        b, n, s, device = *x.shape, self.num_streams, x.device
+
+        stream_attn_diversity_loss &= s > 1
 
         x = self.emb(x)
 
+        attn_matrices = []
+
         for attn, ff in self.layers:
-            x = attn(x, mask = mask) + x
+            attn_out, post_softmax_attn = attn(x, mask = mask)
+
+            attn_matrices.append(post_softmax_attn)
+
+            x = x + attn_out
             x = ff(x) + x
 
-        x = reduce(x, '(b s) n d -> b n d', 'sum', s = self.num_streams)
+        if stream_attn_diversity_loss:
+            aux_loss = sum([calc_stream_loss(attn_matrix, s).mean() for attn_matrix in attn_matrices])
 
-        return self.to_logits(x)
+        logits = self.to_logits(x)
+
+        if not stream_attn_diversity_loss:
+            return logits
+
+        return logits, aux_loss
