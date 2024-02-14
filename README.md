@@ -72,3 +72,14 @@ logits = model(tokens) # (1, 128, 256)
     author = {Sutton, Rich}
 }
 ```
+
+```bibtex
+@article{Shazeer2020TalkingHeadsA,
+    title   = {Talking-Heads Attention},
+    author  = {Noam M. Shazeer and Zhenzhong Lan and Youlong Cheng and Nan Ding and Le Hou},
+    journal = {ArXiv},
+    year    = {2020},
+    volume  = {abs/2003.02436},
+    url     = {https://api.semanticscholar.org/CorpusID:212414717}
+}
+```
