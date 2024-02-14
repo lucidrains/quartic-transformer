@@ -28,6 +28,8 @@ class Attention(Module):
         heads = 8,
         dropout = 0.,
         causal = False,
+        pre_talking_heads = False,
+        post_talking_heads = False
     ):
         super().__init__()
         dim_inner = dim_head * heads
@@ -52,8 +54,8 @@ class Attention(Module):
         self.causal = causal
         self.dropout = nn.Dropout(dropout)
 
-        self.pre_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False)
-        self.post_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False)
+        self.pre_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False) if pre_talking_heads else None
+        self.post_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False) if post_talking_heads else None
 
         nn.init.dirac_(self.pre_talking_heads.weight)
         nn.init.dirac_(self.post_talking_heads.weight)
@@ -80,9 +82,10 @@ class Attention(Module):
 
         mask_value = -torch.finfo(sim.dtype).max
 
-        sim = rearrange(sim, '(b s) h n d -> b (s h) n d', s = s)
-        sim = self.pre_talking_heads(sim)
-        sim = rearrange(sim, 'b (s h) n d -> (b s) h n d', s = s)
+        if exists(self.pre_talking_heads):
+            sim = rearrange(sim, '(b s) h n d -> b (s h) n d', s = s)
+            sim = self.pre_talking_heads(sim)
+            sim = rearrange(sim, 'b (s h) n d -> (b s) h n d', s = s)
 
         if exists(mask):
             sim = einx.where('b j, b ... j, ', mask, sim, mask_value)
@@ -95,9 +98,10 @@ class Attention(Module):
         attn = einx.softmax('b h i [j]', sim)
         attn = self.dropout(attn)
 
-        attn = rearrange(attn, '(b s) h n d -> b (s h) n d', s = s)
-        attn = self.post_talking_heads(attn)
-        attn = rearrange(attn, 'b (s h) n d -> (b s) h n d', s = s)
+        if exists(self.post_talking_heads):
+            attn = rearrange(attn, '(b s) h n d -> b (s h) n d', s = s)
+            attn = self.post_talking_heads(attn)
+            attn = rearrange(attn, 'b (s h) n d -> (b s) h n d', s = s)
 
         out = einsum('b h i j, b h j d -> b h i d', attn, v)
 
@@ -134,7 +138,9 @@ class MultiStreamTransformer(Module):
         attn_dropout = 0.,
         ff_dropout = 0.,
         ff_mult = 4.,
-        ablate_cross_stream_talking_heads = False
+        ablate_cross_stream_talking_heads = False,
+        pre_talking_heads = True,
+        post_talking_heads = True
     ):
         super().__init__()
         self.token_emb = nn.Embedding(num_tokens, dim)
@@ -149,7 +155,15 @@ class MultiStreamTransformer(Module):
 
         for _ in range(depth):
             self.layers.append(ModuleList([
-                Attention(dim = dim, dim_head = dim_head, heads = heads, dropout = attn_dropout, num_streams = talking_heads_num_streams),
+                Attention(
+                    dim = dim,
+                    dim_head = dim_head,
+                    heads = heads,
+                    dropout = attn_dropout,
+                    num_streams = talking_heads_num_streams,
+                    pre_talking_heads = pre_talking_heads,
+                    post_talking_heads = post_talking_heads
+                ),
                 FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout)
             ]))
 
