@@ -26,6 +26,14 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
+class Residual(Module):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def forward(self, x, *args, **kwargs):
+        return self.fn(x, *args, **kwargs) + x
+
 # attention
 
 class Attention(Module):
@@ -38,7 +46,8 @@ class Attention(Module):
         dropout = 0.,
         causal = False,
         pre_talking_heads = False,
-        post_talking_heads = False
+        post_talking_heads = False,
+        non_linear_talking_heads = False
     ):
         super().__init__()
         dim_inner = dim_head * heads
@@ -63,11 +72,18 @@ class Attention(Module):
         self.causal = causal
         self.dropout = nn.Dropout(dropout)
 
-        self.pre_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False) if pre_talking_heads else None
-        self.post_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False) if post_talking_heads else None
+        self.pre_talking_heads = None
+        self.post_talking_heads = None
 
-        nn.init.dirac_(self.pre_talking_heads.weight)
-        nn.init.dirac_(self.post_talking_heads.weight)
+        if non_linear_talking_heads:
+            self.pre_talking_heads = TalkingHeadsFeedForward(all_heads) if pre_talking_heads else None
+            self.post_talking_heads = TalkingHeadsFeedForward(all_heads) if post_talking_heads else None
+        else:
+            self.pre_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False) if pre_talking_heads else None
+            self.post_talking_heads = nn.Conv2d(all_heads, all_heads, 1, bias = False) if post_talking_heads else None
+
+            nn.init.dirac_(self.pre_talking_heads.weight)
+            nn.init.dirac_(self.post_talking_heads.weight)
 
         self.to_out = nn.Sequential(
             Rearrange('b h n d -> b n (h d)'),
@@ -130,6 +146,19 @@ def FeedForward(dim, mult = 4, dropout = 0.):
         nn.Dropout(dropout),
         nn.Linear(dim_inner, dim, bias = False)
     )
+
+def TalkingHeadsFeedForward(dim, mult = 2, dropout = 0.):
+    dim_inner = int(dim * mult)
+    net = Residual(nn.Sequential(
+        einn.Norm('b [c] ...', mean = False, bias = False),
+        nn.Conv2d(dim, dim_inner, 1, bias = False),
+        nn.GELU(),
+        nn.Dropout(dropout),
+        nn.Conv2d(dim_inner, dim, 1, bias = False)
+    ))
+
+    nn.init.zeros_(net.fn[-1].weight)
+    return net
 
 # embedding types
 # streams can either have (1) shared embeddings with a stream specific embedding added
@@ -202,7 +231,8 @@ class MultiStreamTransformer(Module):
         ablate_cross_stream_talking_heads = False,
         pre_talking_heads = True,
         post_talking_heads = True,
-        separate_stream_emb = True
+        separate_stream_emb = True,
+        non_linear_talking_heads = False
     ):
         super().__init__()
         embed_klass = SeparateTokenAndPosEmb if separate_stream_emb else TokenAndPosEmb
@@ -228,7 +258,8 @@ class MultiStreamTransformer(Module):
                     dropout = attn_dropout,
                     num_streams = talking_heads_num_streams,
                     pre_talking_heads = pre_talking_heads,
-                    post_talking_heads = post_talking_heads
+                    post_talking_heads = post_talking_heads,
+                    non_linear_talking_heads = non_linear_talking_heads
                 ),
                 FeedForward(dim = dim, mult = ff_mult, dropout = ff_dropout)
             ]))
