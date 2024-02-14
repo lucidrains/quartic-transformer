@@ -6,6 +6,10 @@ The hypothesis is that there is a task out there that the (sub)quartic transform
 
 Will also contain a modified implementation of <a href="https://arxiv.org/abs/2107.10342">multistream transformer</a> (which is not quartic, but number of streams times the quadratic).
 
+## Appreciation
+
+- <a href="https://a16z.com/supporting-the-open-source-ai-community/">A16Z Open Source AI Grant Program</a> and <a href="https://huggingface.co/">🤗 Huggingface</a> for the generous sponsorships, as well as my other sponsors, for affording me the independence to open source current artificial intelligence research
+
 ## Install
 
 ```bash
