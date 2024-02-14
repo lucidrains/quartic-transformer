@@ -1,3 +1,11 @@
+"""
+einstein notation
+b - batch
+s - stream
+n - seq len
+d - feature dimension
+"""
+
 import torch
 import torch.nn.functional as F
 from torch.nn import Module, ModuleList
@@ -7,6 +15,7 @@ from einops import rearrange, reduce
 from einops.layers.torch import Rearrange
 
 import einx
+from einx import get_at
 import einx.nn.torch as einn
 
 # helper
@@ -122,6 +131,58 @@ def FeedForward(dim, mult = 4, dropout = 0.):
         nn.Linear(dim_inner, dim, bias = False)
     )
 
+# embedding types
+# streams can either have (1) shared embeddings with a stream specific embedding added
+# or (2) separate token / abs pos emb
+
+class TokenAndPosEmb(Module):
+    def __init__(
+        self,
+        *,
+        dim,
+        num_tokens,
+        max_seq_len,
+        num_streams
+    ):
+        super().__init__()
+        self.token_emb = nn.Embedding(num_tokens, dim)
+        self.pos_emb = nn.Embedding(max_seq_len, dim)
+
+        self.stream_emb = nn.Parameter(torch.zeros(num_streams, dim))
+        nn.init.normal_(self.stream_emb, std = 0.02)
+
+    def forward(self, x):
+        seq_len = torch.arange(x.shape[-1], device = x.device)
+
+        token_emb = self.token_emb(x)
+        pos_emb = self.pos_emb(seq_len)
+
+        return einx.add('b n d, n d, s d -> (b s) n d', token_emb, pos_emb, self.stream_emb)
+
+class SeparateTokenAndPosEmb(Module):
+    def __init__(
+        self,
+        *,
+        dim,
+        num_tokens,
+        max_seq_len,
+        num_streams
+    ):
+        super().__init__()
+        self.token_emb = nn.Parameter(torch.zeros(num_streams, num_tokens, dim))
+        self.pos_emb = nn.Parameter(torch.zeros(num_streams, max_seq_len, dim))
+
+        nn.init.normal_(self.token_emb, std = 0.02)
+        nn.init.normal_(self.pos_emb, std = 0.02)
+
+    def forward(self, x):
+        seq_len = torch.arange(x.shape[-1], device = x.device)
+
+        token_emb = get_at('s [e] d, b n -> b s n d', self.token_emb, x)
+        pos_emb = get_at('s [e] d, n -> s n d', self.pos_emb, x)
+
+        return einx.add('b s n d, s n d -> (b s) n d', token_emb, pos_emb)
+
 # classes
 
 class MultiStreamTransformer(Module):
@@ -140,15 +201,20 @@ class MultiStreamTransformer(Module):
         ff_mult = 4.,
         ablate_cross_stream_talking_heads = False,
         pre_talking_heads = True,
-        post_talking_heads = True
+        post_talking_heads = True,
+        separate_stream_emb = True
     ):
         super().__init__()
-        self.token_emb = nn.Embedding(num_tokens, dim)
-        self.pos_emb = nn.Embedding(max_seq_len, dim)
+        embed_klass = SeparateTokenAndPosEmb if separate_stream_emb else TokenAndPosEmb
+
+        self.emb = embed_klass(
+            dim = dim,
+            num_tokens = num_tokens,
+            num_streams = num_streams,
+            max_seq_len = max_seq_len
+        )
 
         self.num_streams = num_streams
-        self.stream_emb = nn.Parameter(torch.randn(num_streams, dim))
-
         self.layers = ModuleList([])
 
         talking_heads_num_streams = 2 if not ablate_cross_stream_talking_heads else 1
@@ -179,10 +245,7 @@ class MultiStreamTransformer(Module):
     ):
         b, n, device = *x.shape, x.device
 
-        x = self.token_emb(x)
-        x = x + self.pos_emb(torch.arange(n, device = device))
-
-        x = einx.add('b n d, s d -> (b s) n d', x, self.stream_emb)
+        x = self.emb(x)
 
         for attn, ff in self.layers:
             x = attn(x, mask = mask) + x
