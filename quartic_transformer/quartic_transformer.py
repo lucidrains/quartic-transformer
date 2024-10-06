@@ -251,6 +251,7 @@ class QuarticTransformer(Module):
         self.dynamic_rel_pos_bias = DynamicPositionBias(dim, depth = 2, heads = dim_edges)
 
         self.to_edge_emb = EdgeEmbed(dim, dim_edges)
+        self.causal = causal
 
         self.layers = ModuleList([])
         for _ in range(depth):
@@ -260,7 +261,7 @@ class QuarticTransformer(Module):
                     FeedForward(dim = dim, mult = ff_mult, dropout = dropout)
                 ]),
                 ModuleList([
-                    AxialLinearAttention(dim = dim_edges, dim_head = linear_dim_head, heads = linear_heads, causal = causal, diagonal_attn = edges_diagonal_attn),
+                    AxialLinearAttention(dim = dim_edges, dim_head = linear_dim_head, heads = linear_heads, diagonal_attn = edges_diagonal_attn),
                     FeedForward(dim = dim_edges, mult = ff_mult)
                 ])
             ]))
@@ -275,7 +276,7 @@ class QuarticTransformer(Module):
         x,
         mask = None
     ):
-        seq_len, device = x.shape[-1], x.device
+        batch, seq_len, device = *x.shape, x.device
         assert seq_len <= self.max_seq_len
 
         x = self.token_emb(x)
@@ -287,8 +288,14 @@ class QuarticTransformer(Module):
         edges = einx.add('b i j d, d i j -> b i j d', edges, edges_rel_pos)
 
         edges_mask = None
-        if exists(mask):
-            edges_mask = einx.logical_and('b i, b j -> b (i j)', mask, mask)
+
+        if self.causal:
+            assert not exists(mask)
+            edges_mask = ~torch.ones((seq_len, seq_len), device = device, dtype = torch.bool).triu(1)
+            edges_mask = repeat(edges_mask, 'i j -> (b i) j', b = batch)
+
+        elif exists(mask):
+            edges_mask = einx.logical_and('b i, b j -> (b i) j', mask, mask)
 
         for (attn, ff), (edges_linear_attn, edges_ff,) in self.layers:
 
@@ -302,7 +309,7 @@ class QuarticTransformer(Module):
 
             edges = edges + edges_out
 
-            edges = edges_linear_attn(edges, mask = mask) + edges
+            edges = edges_linear_attn(edges, mask = edges_mask) + edges
 
             edges = edges_ff(edges) + edges
 
