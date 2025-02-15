@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
   name = 'quartic-transformer',
   packages = find_packages(exclude=[]),
-  version = '0.0.14',
+  version = '0.0.16',
   license='MIT',
   description = 'Quartic Transformer',
   author = 'Phil Wang',
@@ -20,6 +20,7 @@ setup(
     'colt5-attention',
     'einops>=0.7.0',
     'einx[torch]>=0.1.3',
+    'hyper-connections>=0.1.15',
     'taylor-series-linear-attention',
     'torch>=2.0',
     'x-transformers'

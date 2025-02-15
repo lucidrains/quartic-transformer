@@ -20,6 +20,10 @@ from taylor_series_linear_attention import TaylorSeriesLinearAttn
 
 from x_transformers.x_transformers import DynamicPositionBias
 
+# hyper connections
+
+from hyper_connections import get_init_and_expand_reduce_stream_functions
+
 # helpers
 
 def exists(v):
@@ -237,7 +241,8 @@ class QuarticTransformer(Module):
         dropout = 0.,
         max_seq_len = 2048,
         ablate_edges = False,
-        edges_diagonal_attn = True
+        edges_diagonal_attn = True,
+        num_residual_streams = 4
     ):
         super().__init__()
         dim_edges = default(dim_edges, dim)
@@ -253,12 +258,15 @@ class QuarticTransformer(Module):
         self.to_edge_emb = EdgeEmbed(dim, dim_edges)
         self.causal = causal
 
+        init_hyper_conn, self.expand_streams, self.reduce_streams = get_init_and_expand_reduce_stream_functions(num_residual_streams, disable = num_residual_streams == 1)
+
         self.layers = ModuleList([])
+
         for _ in range(depth):
             self.layers.append(ModuleList([
                 ModuleList([
-                    Attention(dim = dim, dim_edges = dim_edges, dim_head = dim_head, heads = heads, dropout = dropout, causal = causal),
-                    FeedForward(dim = dim, mult = ff_mult, dropout = dropout)
+                    init_hyper_conn(dim = dim, branch = Attention(dim = dim, dim_edges = dim_edges, dim_head = dim_head, heads = heads, dropout = dropout, causal = causal)),
+                    init_hyper_conn(dim = dim, branch = FeedForward(dim = dim, mult = ff_mult, dropout = dropout))
                 ]),
                 ModuleList([
                     AxialLinearAttention(dim = dim_edges, dim_head = linear_dim_head, heads = linear_heads, diagonal_attn = edges_diagonal_attn),
@@ -297,12 +305,13 @@ class QuarticTransformer(Module):
         elif exists(mask):
             edges_mask = einx.logical_and('b i, b j -> (b i) j', mask, mask)
 
+        x = self.expand_streams(x)
+
         for (attn, ff), (edges_linear_attn, edges_ff,) in self.layers:
 
-            nodes_out, edges_out = attn(x, mask = mask, edges = edges if not self.ablate_edges else None)
+            x, edges_out = attn(x, mask = mask, edges = edges if not self.ablate_edges else None)
 
-            x = x + nodes_out
-            x = ff(x) + x
+            x = ff(x)
 
             if self.ablate_edges:
                 continue
@@ -312,5 +321,7 @@ class QuarticTransformer(Module):
             edges = edges_linear_attn(edges, mask = edges_mask) + edges
 
             edges = edges_ff(edges) + edges
+
+        x = self.reduce_streams(x)
 
         return self.to_logits(x)
