@@ -83,3 +83,14 @@ logits = model(tokens) # (1, 128, 256)
     url     = {https://api.semanticscholar.org/CorpusID:212414717}
 }
 ```
+
+```bibtex
+@article{Diao2022RelationalAG,
+    title   = {Relational Attention: Generalizing Transformers for Graph-Structured Tasks},
+    author  = {Cameron Diao and Ricky Loynd},
+    journal = {ArXiv},
+    year    = {2022},
+    volume  = {abs/2210.05062},
+    url     = {https://api.semanticscholar.org/CorpusID:252815657}
+}
+```
