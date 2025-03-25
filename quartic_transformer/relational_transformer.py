@@ -1,5 +1,5 @@
 import torch
-from torch import nn, einsum
+from torch import nn, cat, einsum
 from torch.nn import Module, ModuleList
 
 import einx
@@ -158,13 +158,15 @@ class NodesToEdges(Module):
         self,
         *,
         dim_nodes,
-        dim_edges
+        dim_edges,
+        causal = False
     ):
         super().__init__()
         self.node_norm = nn.RMSNorm(dim_nodes)
         self.edges_norm = nn.RMSNorm(dim_edges)
 
-        self.proj = nn.Linear(dim_nodes * 2 + dim_edges, dim_edges)
+        self.causal = causal
+        self.proj = nn.Linear(dim_nodes * 2 + dim_edges * (1 if causal else 2), dim_edges)
 
     def forward(
         self,
@@ -179,7 +181,12 @@ class NodesToEdges(Module):
 
         rows, cols = torch.broadcast_tensors(rows, cols)
 
-        concat_feats = torch.cat((rows, cols, edges), dim = -1)
+        concat_feats = cat((rows, cols, edges), dim = -1)
+
+        if not self.causal:
+            edges = rearrange(edges, 'b i j d -> b j i d')
+            concat_feats = cat((concat_feats, edges), dim = -1)
+
         out = self.proj(concat_feats)
         return out
 
@@ -224,7 +231,7 @@ class RelationalTransformer(Module):
                     FeedForward(dim = dim, mult = ff_mult, dropout = dropout)
                 ]),
                 ModuleList([
-                    NodesToEdges(dim_nodes = dim, dim_edges = dim_edges),
+                    NodesToEdges(dim_nodes = dim, dim_edges = dim_edges, causal = causal),
                     FeedForward(dim = dim_edges, mult = ff_mult)
                 ])
             ]))
@@ -266,7 +273,8 @@ if __name__ == '__main__':
         num_tokens = 256,
         dim = 128,
         dim_edges = 16,
-        depth = 2
+        depth = 2,
+        causal = False
     )
 
     x = torch.randint(0, 256, (2, 128))
